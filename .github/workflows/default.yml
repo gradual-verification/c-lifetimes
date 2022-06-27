@@ -1,4 +1,4 @@
-name: Main workflow
+name: Build/Test
 
 on:
   - pull_request
