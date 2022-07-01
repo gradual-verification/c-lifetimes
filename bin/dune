@@ -1,4 +1,5 @@
 (executable
  (public_name c_lifetimes)
  (name main)
- (libraries c_lifetimes ))
+ (libraries c_lifetimes core)
+ (preprocess (pps ppx_jane)))
