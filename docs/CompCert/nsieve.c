@@ -4,6 +4,7 @@
 
 typedef unsigned char boolean;
 
+// () -> () : total
 static unsigned int nsieve(int m) {
   unsigned int count = 0, i, j;
   boolean *flags = (boolean *)malloc(m * sizeof(boolean));

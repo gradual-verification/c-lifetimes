@@ -24,6 +24,8 @@ void eval_At_times_u(int N, const double u[], double Au[]) {
   }
 }
 
+// we alloc v and free it at the end of the function, so this function should be total
+// () -> `a -> () -> void : total
 void eval_AtA_times_u(int N, const double u[], double AtAu[]) {
   double *v = malloc(N * sizeof(double));
   eval_A_times_u(N, u, v);

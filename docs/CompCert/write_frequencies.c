@@ -25,6 +25,8 @@ typedef struct ssorter {
   int num;
 } sorter;
 
+// total
+// () -> `a -> () -> void : total
 void write_frequencies(int fl, char *buffer, long buflen) {
   struct ht_ht *ht;
   long total, i, j, size;

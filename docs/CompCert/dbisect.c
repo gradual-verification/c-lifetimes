@@ -9,6 +9,7 @@
 // c can be made const, b and beta are both const except for index 0
 // (but index 0 isn't defined because they use 1-indexing)
 // z and eps2 are both mutated
+// this function should be total memory-wise (all heap-allocated data has static lifetime)
 static void dbisect(double c[], double b[], double beta[], int n, int m1,
                     int m2, double eps1, double *eps2, int *z, double x[])
 

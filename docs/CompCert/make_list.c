@@ -13,6 +13,8 @@ struct _list {
   struct _list *next;
 } * wanted;
 
+// returns a linked list node
+// `a -> `b -> `c -> `d : alloc<`d>
 struct _list *make_list(int *data, int *value,
                         int *all) /* create the whole _list of moves */
                                   /* for the _data structure data */
