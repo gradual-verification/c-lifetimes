@@ -6,9 +6,9 @@ description:
 maintainer: ["Ian McCormack" "Timothy Zhou"]
 authors: ["Ian McCormack" "Timothy Zhou"]
 license: "LICENSE"
-homepage: "https://github.com/gradual-verification/c_lifetimes"
-doc: "https://github.com/gradual-verification/c_lifetimes"
-bug-reports: "https://github.com/gradual-verification/c_lifetimes/issues"
+homepage: "https://github.com/gradual-verification/lifeline"
+doc: "https://github.com/gradual-verification/lifeline"
+bug-reports: "https://github.com/gradual-verification/lifeline/issues"
 depends: [
   "ocaml"
   "dune" {>= "3.3"}
@@ -30,4 +30,4 @@ build: [
     "@doc" {with-doc}
   ]
 ]
-dev-repo: "git+https://github.com/gradual-verification/c_lifetimes.git"
+dev-repo: "git+https://github.com/gradual-verification/lifeline.git"
