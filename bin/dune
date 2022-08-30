@@ -1,5 +1,7 @@
 (executable
  (public_name lifeline)
  (name main)
- (libraries core lifeline)
+ (libraries core core_unix core_unix.filename_unix core_unix.command_unix lifeline cmdliner dune-build-info)
  (preprocess (pps ppx_jane)))
+
+ 
