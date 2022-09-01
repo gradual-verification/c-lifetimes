@@ -5,3 +5,5 @@ let ( * ) (a:liveness) (b:liveness) =  match a with
   | Dead -> (match b with 
       | Zombie -> Zombie | Dead -> Dead | Alive -> Zombie)
   | Zombie -> Zombie
+
+

@@ -1,13 +1,14 @@
 module Config = struct
-  type dump_type = CIL | CFG
+  type dump_type = CIL | CFG | ALL
   let dump_type_str = function
     | CIL -> "cil"
     | CFG -> "cfg"
+    | ALL -> "all"
 
   let (=) (dt1:dump_type) (dt2:dump_type) = String.equal (dump_type_str dt1) (dump_type_str dt2)
 
   let match_dump_type (dt:(dump_type option)) (desired:dump_type) = match dt with
-  | Some t -> (t = desired)
+  | Some t -> (t = desired) || t = ALL
   | None -> true
 
   type config_t = {
