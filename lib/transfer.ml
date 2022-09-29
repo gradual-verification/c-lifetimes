@@ -2,6 +2,10 @@ open GoblintCil
 open Abstract
 module DF = Dataflow
 
+
+let flowInst _instr state = state
+
+
 module LifetimeInferenceDefn = struct
 
   type t = AbstractState.t
@@ -21,27 +25,29 @@ module LifetimeInferenceDefn = struct
   (** Take some old data for the start of a statement, and some new data for
     the same point. Return None if the combination is identical to the old
     data. Otherwise, compute the combination, and return it. *)
-  let combinePredecessors _stmt ~old new_state =
-    Some (AbstractState.join old new_state)
+  let combinePredecessors (_s : stmt) ~old (state : t) =
+    Some (AbstractState.join old state)
 
   (** Whether to put this statement in the worklist. This is called when a
     block would normally be put in the worklist. *)
   let filterStmt _stmt = true
+  
 
   let pretty _unit _s = Pretty.text "N/A"
 
-  let doInstr _instr state = DF.Done state
+  let doInstr (i : instr) (_state : t) = let update = (flowInst i) in DF.Post update
   (** The (forwards) transfer function for an instruction. The
      {!Cil.currentLoc} is set before calling this. The default action is to
      continue with the state unchanged. *)
 
-  let doStmt _stmt _state = DF.SDone
+  let doStmt _stmt _state = DF.SDefault
   (** The (forwards) transfer function for a statement. The {!Cil.currentLoc}
      is set before calling this. The default action is to do the instructions
      in this statement, if applicable, and continue with the successors. *)
 
 
   let doGuard _exp _state = DF.GDefault
+
     (** Generate the successor to an If statement assuming the given expression
       is nonzero.  Analyses that don't need guard information can return
       GDefault; this is equivalent to returning GUse of the input.
@@ -50,5 +56,7 @@ module LifetimeInferenceDefn = struct
       twice per If, once for "then" and once for "else".
     *)
 end
+
+
 
 module LifetimeInference = DF.ForwardsDataFlow(LifetimeInferenceDefn)
