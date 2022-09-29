@@ -1,3 +1,5 @@
 (library
  (name lifeline)
- (libraries goblint-cil core core_unix core_unix.filename_unix))
+ (libraries goblint-cil core core_unix core_unix.filename_unix)
+ (preprocess (pps ppx_jane ppx_sexp_conv))
+)
