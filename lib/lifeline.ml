@@ -1,3 +1,5 @@
+include Abstract
+
 module Config = struct
   type dump_type = CIL | CFG | ALL
   let dump_type_str = function

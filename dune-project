@@ -3,7 +3,6 @@
 (name lifeline)
 
 (generate_opam_files true)
-
 (source
  (github gradual-verification/lifeline))
 

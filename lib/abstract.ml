@@ -13,12 +13,6 @@ let ( * ) (a : liveness) (b : liveness) =
 let string_of_liveness l =
   match l with Alive -> "Alive" | Dead -> "Dead" | Zombie -> "Zombie"
 
-(** `
-  Both lifetime variables and abstract locations can be 
-  represented by a pair of ints, where the first value is 
-  the unique ID for a reference-type variable, and the second
-  is the level of indirection into its type.
-**)
 module SourceLocation = struct
   module T = struct
     type t = {

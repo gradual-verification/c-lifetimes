@@ -1,2 +1,6 @@
-(test
- (name c_lifetimes))
+(library
+ (name test)
+ (libraries base lifeline)
+ (inline_tests)
+ (preprocess (pps ppx_inline_test))
+)
