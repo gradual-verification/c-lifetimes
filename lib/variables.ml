@@ -1,6 +1,6 @@
 open Core
 open GoblintCil
-
+open Cil
 let isConst attrs = hasAttribute "const" attrs
 
 type indirection = typ * bool list
@@ -22,10 +22,10 @@ let rec compute_indirection t =
 
 module VarInfo = struct
   type t = { vinfo : varinfo; btype : typ; clookup : bool list }
-
   let initialize vi =
     let indirection = compute_indirection vi.vtype in
     match indirection with t, bl -> { vinfo = vi; btype = t; clookup = bl }
+  let pretty vi = Pretty.concat (Pretty.text (vi.vinfo.vname^":")) (printType (Cil.defaultCilPrinter) () vi.vinfo.vtype)
 end
 
 module VarMap = struct
@@ -45,6 +45,12 @@ module VarMap = struct
   let initialize_varmap (vl : varinfo list) =
     List.fold_left vl ~init:Int.Map.empty ~f:(fun m vi ->
         Int.Map.add_exn m ~key:vi.vid ~data:(VarInfo.initialize vi))
+  let pretty vm = 
+    ((vm.locals |> Int.Map.to_alist) @ (vm.parameters |> Int.Map.to_alist))
+    |> List.map ~f:(fun kv ->
+            Pretty.concat (Pretty.text (string_of_int (fst kv) ^ " -> "))  (VarInfo.pretty (snd kv)))
+    |> Pretty.docList ~sep:Pretty.line Fun.id ()
+  let string_of ~width vm = Pretty.sprint ~width:width (pretty vm)
 
   let initialize fd =
     {

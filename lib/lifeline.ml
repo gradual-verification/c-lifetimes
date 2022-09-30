@@ -1,4 +1,5 @@
 include Abstract
+open GoblintCil
 
 module Config = struct
   type dump_type = CIL | CFG | ALL
@@ -22,4 +23,6 @@ module Config = struct
     { dump_type = dt; dump_loc = dl; output = op; verbose = v }
 end
 
-let analyze (_config : Config.config_t) (_file : GoblintCil.file) = ()
+let analyze (_config : Config.config_t) (file : GoblintCil.file) =
+  iterGlobals file (fun g ->
+      match g with GFun (fd, loc) -> (print_endline (Location.string_of_loc loc)); Transfer.analyze_function fd | _ -> ())

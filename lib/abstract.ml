@@ -1,6 +1,6 @@
 open Core
 open Variables
-
+open GoblintCil
 type liveness = Alive | Zombie | Dead
 
 let ( * ) (a : liveness) (b : liveness) =
@@ -13,9 +13,9 @@ let ( * ) (a : liveness) (b : liveness) =
 let string_of_liveness l =
   match l with Alive -> "Alive" | Dead -> "Dead" | Zombie -> "Zombie"
 
-module SourceLocation = struct
+module Location = struct
   module T = struct
-    type t = {
+    type t = Cil.location = {
       line : int;
       file : string;
       byte : int;
@@ -27,7 +27,9 @@ module SourceLocation = struct
     }
     [@@deriving sexp, compare]
   end
-
+  
+  let string_of_loc (t:T.t):string = (t.file)^":"^(string_of_int t.line)^":"^(string_of_int t.column)
+  
   include Comparable.Make (T)
 end
 
@@ -44,11 +46,11 @@ module AbstractValue = struct
     List.fold_left (Map.keys map) ~init:Map.empty ~f:(fun m k ->
         Map.add_exn m ~key:k ~data:(copy (Map.find_exn m k)))
 
-  let string_of_abstract (prefix : string) (varmap : VarMap.t) (abstract : T.t)
+  let pretty (prefix : string) (varmap : VarMap.t) (abstract : T.t)
       =
-    prefix
+    Pretty.text(prefix
     ^ VarMap.name_of_vid ~vm:varmap ~vid:abstract.vid
-    ^ string_of_int abstract.indirection
+    ^ string_of_int abstract.indirection)
 end
 
 module type AbstractMapping = sig
@@ -70,6 +72,11 @@ module Sigma : AbstractMapping = struct
 
   let copy c = AbstractValue.copy_map c AbstractValue.copy_set
   let empty = AbstractValue.Map.empty
+
+  let _pretty ~vm sigma = (sigma |> AbstractValue.Map.to_alist)
+  |> List.map ~f:(fun kv -> Pretty.concat (AbstractValue.pretty "l_" vm (fst kv)) ((Pretty.text " -> ")))
+  |> Pretty.docList ~sep:Pretty.line Fun.id ()
+
 end
 
 module Chi : AbstractMapping = struct
@@ -84,20 +91,22 @@ module Chi : AbstractMapping = struct
 end
 
 module Phi : AbstractMapping = struct
-  type value = SourceLocation.Set.t
+  type value = Location.Set.t
   type t = value AbstractValue.Map.t
 
   let join (a : t) (b : t) =
     AbstractValue.Map.merge_skewed a b ~combine:(fun ~key:_ av bv ->
-        SourceLocation.Set.union av bv)
+        Location.Set.union av bv)
 
   let copy c =
     AbstractValue.copy_map c (fun s ->
-        List.fold_left (SourceLocation.Set.to_list s)
-          ~init:SourceLocation.Set.empty ~f:(fun s v ->
-            SourceLocation.Set.add s v))
+        List.fold_left (Location.Set.to_list s)
+          ~init:Location.Set.empty ~f:(fun s v ->
+            Location.Set.add s v))
 
   let empty = AbstractValue.Map.empty
+
+  
 end
 
 module Delta = struct
@@ -144,9 +153,21 @@ module AbstractState = struct
 
   let join t1 t2 =
     {
+      variables = t1.variables;
       liveness = Chi.join t1.liveness t2.liveness;
       mayptsto = Sigma.join t1.mayptsto t2.mayptsto;
       reassignment = Phi.join t1.reassignment t2.reassignment;
-      variables = t1.variables;
     }
+
+  let initial fd = let vars = (VarMap.initialize fd) in {
+    variables = vars;
+    liveness = Chi.empty;
+    mayptsto = Sigma.empty;
+    reassignment = Phi.empty;
+  } 
+
+
+  let pretty state = Pretty.docList ~sep:Pretty.line Fun.id () [VarMap.pretty state.variables]
+
+  let string_of ~width state = Pretty.sprint ~width (pretty state) 
 end
