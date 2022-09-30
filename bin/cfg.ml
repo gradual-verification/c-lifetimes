@@ -50,8 +50,8 @@ module MakeGraph (Node : NodeSig) (Edge : EdgeSig) = struct
 
   let add_edges (g : graph) (es : edge list) =
     List.fold es ~init:g ~f:(fun current_g e -> add_edge current_g e)
-  
-  let succ (g : graph) (n : Node.node_type) = 
+
+  let succ (g : graph) (n : Node.node_type) =
     let extractNode (id, _) = Array.get g.nodes id in
     let edges = Map.find_exn g.edges (Node.getID n) in
     List.map edges ~f:extractNode

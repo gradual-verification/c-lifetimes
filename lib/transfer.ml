@@ -2,22 +2,19 @@ open GoblintCil
 open Abstract
 module DF = Dataflow
 
-
 let flowInst _instr state = state
 
-
 module LifetimeInferenceDefn = struct
-
   type t = AbstractState.t
-  
+
   let name = "Lifetime Inference"
   let debug = ref false
   let copy = AbstractState.copy
-  
-  let stmtStartData = Inthash.create 64
+
   (** For each statement id, the data at the start. Not found in the hash
    table means nothing is known about the state at this point. At the end
     of the analysis this means that the block is not reachable. *)
+  let stmtStartData = Inthash.create 64
 
   (** Give the first value for a predecessors, compute the value to be set for the block *)
   let computeFirstPredecessor _stmt state = state
@@ -31,24 +28,24 @@ module LifetimeInferenceDefn = struct
   (** Whether to put this statement in the worklist. This is called when a
     block would normally be put in the worklist. *)
   let filterStmt _stmt = true
-  
 
   let pretty _unit _s = Pretty.text "N/A"
 
-  let doInstr (i : instr) (_state : t) = let update = (flowInst i) in DF.Post update
   (** The (forwards) transfer function for an instruction. The
      {!Cil.currentLoc} is set before calling this. The default action is to
      continue with the state unchanged. *)
+  let doInstr (i : instr) (_state : t) =
+    let update = flowInst i in
+    DF.Post update
 
-  let doStmt _stmt _state = DF.SDefault
   (** The (forwards) transfer function for a statement. The {!Cil.currentLoc}
      is set before calling this. The default action is to do the instructions
      in this statement, if applicable, and continue with the successors. *)
-
+  let doStmt _stmt _state = DF.SDefault
 
   let doGuard _exp _state = DF.GDefault
 
-    (** Generate the successor to an If statement assuming the given expression
+  (** Generate the successor to an If statement assuming the given expression
       is nonzero.  Analyses that don't need guard information can return
       GDefault; this is equivalent to returning GUse of the input.
       A return value of GUnreachable indicates that this half of the branch
@@ -57,6 +54,4 @@ module LifetimeInferenceDefn = struct
     *)
 end
 
-
-
-module LifetimeInference = DF.ForwardsDataFlow(LifetimeInferenceDefn)
+module LifetimeInference = DF.ForwardsDataFlow (LifetimeInferenceDefn)

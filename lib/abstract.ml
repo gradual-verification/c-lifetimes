@@ -1,5 +1,5 @@
 open Core
-open GoblintCil
+open Variables
 
 type liveness = Alive | Zombie | Dead
 
@@ -33,7 +33,7 @@ end
 
 module AbstractValue = struct
   module T = struct
-    type t = int * int [@@deriving sexp, compare]
+    type t = { vid : int; indirection : int } [@@deriving sexp, compare]
   end
 
   include Comparable.Make (T)
@@ -43,6 +43,12 @@ module AbstractValue = struct
   let copy_map map copy =
     List.fold_left (Map.keys map) ~init:Map.empty ~f:(fun m k ->
         Map.add_exn m ~key:k ~data:(copy (Map.find_exn m k)))
+
+  let string_of_abstract (prefix : string) (varmap : VarMap.t) (abstract : T.t)
+      =
+    prefix
+    ^ VarMap.name_of_vid ~vm:varmap ~vid:abstract.vid
+    ^ string_of_int abstract.indirection
 end
 
 module type AbstractMapping = sig
@@ -120,43 +126,27 @@ module Delta = struct
     }
 end
 
-
-
-
 module AbstractState = struct
+  type t = {
+    liveness : Chi.t;
+    mayptsto : Sigma.t;
+    reassignment : Phi.t;
+    variables : VarMap.t;
+  }
 
-  module VarMap = struct
-    type varmap = varinfo Int.Map.t
-    type t = {
-      locals: varmap;
-      parameters: varmap;
-    }
-    let info_of_vid vm id = Int.Map.find_exn vm id
-    let name_of_vid vm id = (info_of_vid vm id).vname
-    let type_of_vid vm id = (info_of_vid vm id).vtype
-    let loc_of_vid vm id = (info_of_vid vm id).vdecl
-    let initialize_varmap (vl:varinfo list) =
-      List.fold_left (vl) ~init:Int.Map.empty
-        ~f:(fun m vi -> Int.Map.add_exn m ~key:vi.vid ~data:vi)
-    let initialize fd = {
-      locals = initialize_varmap fd.slocals;
-      parameters = initialize_varmap fd.sformals;
-    }
-  end
-
-  type t = { liveness : Chi.t; mayptsto : Sigma.t; reassignment : Phi.t; variables: VarMap.t}
   let copy t =
     {
       liveness = Chi.copy t.liveness;
       mayptsto = Sigma.copy t.mayptsto;
       reassignment = Phi.copy t.reassignment;
-      variables = t.variables
+      variables = t.variables;
     }
+
   let join t1 t2 =
     {
       liveness = Chi.join t1.liveness t2.liveness;
       mayptsto = Sigma.join t1.mayptsto t2.mayptsto;
       reassignment = Phi.join t1.reassignment t2.reassignment;
-      variables = t1.variables
+      variables = t1.variables;
     }
 end
