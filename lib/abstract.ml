@@ -218,3 +218,20 @@ module AbstractState = struct
 
   let string_of ~width state = Pretty.sprint ~width (pretty state)
 end
+
+
+module Delta = struct
+  type lvar_origin = (VarInfo.t)
+  type t = {
+    var_association: AbstractValue.T.t list Int.Map.t;
+    lookup : (int * AbstractValue.Set.t) AbstractValue.Map.t;
+    relation : Int.Set.t Int.Map.t;
+  }
+  let empty = {
+    var_association = Int.Map.empty;
+    lookup = AbstractValue.Map.empty;
+    relation = Int.Map.empty;
+  }
+  let equate (_v1:lvar_origin) (_v2:lvar_origin) = ()
+  let outlives (_v1:lvar_origin) (_v2:lvar_origin) = ()
+end

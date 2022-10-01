@@ -4,7 +4,7 @@ module DF = Dataflow
 
 let flowInst _instr state = state
 
-module LifetimeInference = struct
+module LifetimeChecking = struct
   type t = AbstractState.t
 
   let name = "Lifetime Inference"
@@ -54,13 +54,13 @@ module LifetimeInference = struct
     *)
 end
 
-module LifetimeInferenceDF = DF.ForwardsDataFlow (LifetimeInference)
+module LifetimeCheckingDF = DF.ForwardsDataFlow (LifetimeChecking)
 
 let analyze_function (fd : Cil.fundec):unit =
   let first_stmt = List.hd fd.sbody.bstmts in
   let initialState = AbstractState.initial fd in
   print_string ((AbstractState.string_of ~width:1 initialState)^"\n");
 
-  Inthash.clear LifetimeInference.stmtStartData;
-  Inthash.add LifetimeInference.stmtStartData first_stmt.sid initialState;
-  LifetimeInferenceDF.compute[first_stmt]
+  Inthash.clear LifetimeChecking.stmtStartData;
+  Inthash.add LifetimeChecking.stmtStartData first_stmt.sid initialState;
+  LifetimeCheckingDF.compute[first_stmt]

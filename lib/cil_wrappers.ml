@@ -13,8 +13,6 @@ module Type = struct
         Poly.compare sig1 sig2
 end
 
-
-
 module VarInfo = struct
   type t = {
     vinfo: varinfo;
