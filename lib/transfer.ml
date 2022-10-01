@@ -60,7 +60,7 @@ let analyze_function (fd : Cil.fundec):unit =
   let first_stmt = List.hd fd.sbody.bstmts in
   let initialState = AbstractState.initial fd in
   print_string ((AbstractState.string_of ~width:1 initialState)^"\n");
-  print_string (Sigma.string_of ~width:1 ~vm:initialState.variables initialState.mayptsto);
+
   Inthash.clear LifetimeInference.stmtStartData;
   Inthash.add LifetimeInference.stmtStartData first_stmt.sid initialState;
   LifetimeInferenceDF.compute[first_stmt]
