@@ -1,36 +1,39 @@
 open Core
 open GoblintCil
 open Cil
-let isConst attrs = hasAttribute "const" attrs
 
-type indirection = typ * bool list
-
-let rec compute_indirection t =
-  match t with
-  | TPtr (inner, attrs) ->
-      let result = compute_indirection inner in
-      (fst result, snd result @ [ isConst attrs ])
-  | TVoid attrs -> (t, [ isConst attrs ])
-  | TInt (_, attrs) -> (t, [ isConst attrs ])
-  | TFloat (_, attrs) -> (t, [ isConst attrs ])
-  | TArray (_, _, attrs) -> (t, [ isConst attrs ])
-  | TFun (_, _, _, attrs) -> (t, [ isConst attrs ])
-  | TNamed (_, attrs) -> (t, [ isConst attrs ])
-  | TComp (_, attrs) -> (t, [ isConst attrs ])
-  | TEnum (_, attrs) -> (t, [ isConst attrs ])
-  | TBuiltin_va_list attrs -> (t, [ isConst attrs ])
+module Type = struct
+  type t = typ
+  let rec unroll (t1:typ):(typ list) = match t1 with
+  | TPtr(t, _) -> [t] @ (unroll t)
+  | _ -> [t1]
+  let compare t1 t2 =
+    let sig1 = typeSig t1 in
+      let sig2 = typeSig t2 in
+        Poly.compare sig1 sig2
+end
 
 module VarInfo = struct
-  type t = { vinfo : varinfo; btype : typ; clookup : bool list }
-  let initialize vi =
-    let indirection = compute_indirection vi.vtype in
-    match indirection with t, bl -> { vinfo = vi; btype = t; clookup = bl }
+  type t = {
+    vinfo: varinfo;
+    unrolled_type: typ list;
+  }
+  let initialize vi = {
+    vinfo = vi;
+    unrolled_type = Type.unroll vi.vtype
+  }
+  
   let pretty vi = Pretty.concat (Pretty.text (vi.vinfo.vname^":")) (printType (Cil.defaultCilPrinter) () vi.vinfo.vtype)
 end
 
 module VarMap = struct
   type varmap = VarInfo.t Int.Map.t
   type t = { locals : varmap; parameters : varmap }
+
+  let local_data (vm:t) = (Int.Map.data vm.locals) 
+  let parameter_data (vm:t) = (Int.Map.data vm.parameters)
+
+
 
   let info_of_vid ~vm ~vid =
     let local = Int.Map.find vm.locals vid in
@@ -45,6 +48,7 @@ module VarMap = struct
   let initialize_varmap (vl : varinfo list) =
     List.fold_left vl ~init:Int.Map.empty ~f:(fun m vi ->
         Int.Map.add_exn m ~key:vi.vid ~data:(VarInfo.initialize vi))
+
   let pretty vm = 
     ((vm.locals |> Int.Map.to_alist) @ (vm.parameters |> Int.Map.to_alist))
     |> List.map ~f:(fun kv ->
@@ -57,4 +61,25 @@ module VarMap = struct
       locals = initialize_varmap fd.slocals;
       parameters = initialize_varmap fd.sformals;
     }
+end
+
+
+module Location = struct
+  module T = struct
+    type t = Cil.location = {
+      line : int;
+      file : string;
+      byte : int;
+      column : int;
+      endLine : int;
+      endByte : int;
+      endColumn : int;
+      synthetic : bool;
+    }
+    [@@deriving sexp, compare]
+  end
+  let string_of_loc (t : T.t) : string =
+    t.file ^ ":" ^ string_of_int t.line ^ ":" ^ string_of_int t.column
+
+  include Comparable.Make (T)
 end

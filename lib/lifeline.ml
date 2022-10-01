@@ -1,5 +1,6 @@
 include Abstract
 open GoblintCil
+open Cil_wrappers
 
 module Config = struct
   type dump_type = CIL | CFG | ALL
