@@ -56,11 +56,11 @@ end
 
 module LifetimeCheckingDF = DF.ForwardsDataFlow (LifetimeChecking)
 
-let analyze_function (fd : Cil.fundec):unit =
+let analyze_function (fd : Cil.fundec) : unit =
   let first_stmt = List.hd fd.sbody.bstmts in
   let initialState = AbstractState.initial fd in
-  print_string ((AbstractState.string_of ~width:1 initialState)^"\n");
+  print_string (AbstractState.string_of ~width:1 initialState ^ "\n");
 
   Inthash.clear LifetimeChecking.stmtStartData;
   Inthash.add LifetimeChecking.stmtStartData first_stmt.sid initialState;
-  LifetimeCheckingDF.compute[first_stmt]
+  LifetimeCheckingDF.compute [ first_stmt ]

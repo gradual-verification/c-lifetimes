@@ -2,17 +2,13 @@ open Core
 open Cil_wrappers
 open GoblintCil
 
-type liveness = Alive | Zombie | Dead
+type vitality = Alive | Zombie | Dead [@@deriving equal]
 type vid = int [@@deriving sexp, compare]
 
-let ( * ) (a : liveness) (b : liveness) =
-  match a with
-  | Alive -> (
-      match b with Zombie -> Zombie | Dead -> Zombie | Alive -> Alive)
-  | Dead -> ( match b with Zombie -> Zombie | Dead -> Dead | Alive -> Zombie)
-  | Zombie -> Zombie
+let ( * ) (a : vitality) (b : vitality) =
+  if equal_vitality a b then a else Zombie
 
-let string_of_liveness l =
+let string_of_vitality l =
   match l with Alive -> "Alive" | Dead -> "Dead" | Zombie -> "Zombie"
 
 module AbstractValue = struct
@@ -22,15 +18,10 @@ module AbstractValue = struct
 
   include Comparable.Make (T)
 
-  let gen_local (vi : VarInfo.t) = (vi.vinfo.vid, 0)
+  let gen_local (vi : VarInfo.t) : T.t = (vi.vinfo.vid, 0)
 
   let gen_all (vi : VarInfo.t) : T.t list =
-    let rec lift index (vi : VarInfo.t) lst =
-      match lst with
-      | _ :: tl -> [ (vi.vinfo.vid, index) ] @ lift (index + 1) vi tl
-      | [] -> []
-    in
-    lift 0 vi vi.unrolled_type
+    List.mapi vi.unrolled_type ~f:(fun i _ -> (vi.vinfo.vid, i))
 
   let copy_set s = List.fold_left (Set.to_list s) ~init:Set.empty ~f:Set.add
 
@@ -102,7 +93,7 @@ module Sigma = struct
 end
 
 module Chi = struct
-  type value = liveness
+  type value = vitality
   type t = value AbstractValue.Map.t
 
   let join (a : t) (b : t) =
@@ -112,13 +103,19 @@ module Chi = struct
   let empty = AbstractValue.Map.empty
 
   let initial vm =
-    AbstractValue.Map.of_alist_exn
-      (List.map (VarMap.local_data vm) ~f:(fun vi ->
-           (AbstractValue.gen_local vi, Alive))
-      @ List.fold_left
-          (List.map (VarMap.parameter_data vm) ~f:(fun vi ->
-               List.map (AbstractValue.gen_all vi) ~f:(fun abv -> (abv, Alive))))
-          ~init:[] ~f:List.append)
+    let to_alive abv = (abv, Alive) in
+    let locals =
+      let local_to_alive = Fn.compose to_alive AbstractValue.gen_local in
+      List.map (VarMap.local_data vm) ~f:local_to_alive
+    in
+    let params =
+      let param_to_alive pi = List.map (AbstractValue.gen_all pi) ~f:to_alive in
+      let params_mappings =
+        List.map (VarMap.parameter_data vm) ~f:param_to_alive
+      in
+      List.concat params_mappings
+    in
+    AbstractValue.Map.of_alist_exn (locals @ params)
 
   let pretty ?(indent = 4) ~vm chi =
     Pretty.indent indent
@@ -127,7 +124,7 @@ module Chi = struct
              Pretty.concat
                (AbstractValue.pretty "l_" vm (fst kv))
                (Pretty.concat (Pretty.text " -> ")
-                  (Pretty.text (string_of_liveness (snd kv)))))
+                  (Pretty.text (string_of_vitality (snd kv)))))
       |> Pretty.docList ~sep:Pretty.line Fun.id ())
 
   let string_of ~width ~vm chi = Pretty.sprint ~width (pretty ~vm chi)
@@ -151,14 +148,19 @@ module Phi = struct
           ~f:(fun s v -> Location.Set.add s v))
 
   let initial vm =
-    AbstractValue.Map.of_alist_exn
-      (List.map (VarMap.local_data vm) ~f:(fun vi ->
-           (AbstractValue.gen_local vi, Location.Set.empty))
-      @ List.fold_left
-          (List.map (VarMap.parameter_data vm) ~f:(fun vi ->
-               List.map (AbstractValue.gen_all vi) ~f:(fun abv ->
-                   (abv, Location.Set.empty))))
-          ~init:[] ~f:List.append)
+    let to_empty abv = (abv, Location.Set.empty) in
+    let locals =
+      let local_to_empty = Fn.compose to_empty AbstractValue.gen_local in
+      List.map (VarMap.local_data vm) ~f:local_to_empty
+    in
+    let params =
+      let param_data = VarMap.parameter_data vm in
+      let param_to_mappings vi =
+        List.map (AbstractValue.gen_all vi) ~f:to_empty
+      in
+      List.concat (List.map param_data ~f:param_to_mappings)
+    in
+    AbstractValue.Map.of_alist_exn (locals @ params)
 
   let pretty ?(indent = 4) ~vm phi =
     Pretty.indent indent
@@ -207,31 +209,41 @@ module AbstractState = struct
       reassignment = Phi.initial vars;
     }
 
-  let title text doc = Pretty.concat (Pretty.text (text^":\n")) (doc)
+  let title text doc = Pretty.concat (Pretty.text (text ^ ":\n")) doc
+
   let pretty state =
     let varmap_pretty = VarMap.pretty state.variables in
     let sigma_pretty = Sigma.pretty ~vm:state.variables state.mayptsto in
     let chi_pretty = Chi.pretty ~vm:state.variables state.liveness in
     let phi_pretty = Phi.pretty ~vm:state.variables state.reassignment in
-    Pretty.indent 4 (Pretty.docList ~sep:(Pretty.text "\n") Fun.id ()
-      [ title "Variables" varmap_pretty; title "May-Points-To" sigma_pretty; title "Liveness" chi_pretty; title "Last Assigned At" phi_pretty ])
+    Pretty.indent 4
+      (Pretty.docList ~sep:(Pretty.text "\n") Fun.id ()
+         [
+           title "Variables" varmap_pretty;
+           title "May-Points-To" sigma_pretty;
+           title "Liveness" chi_pretty;
+           title "Last Assigned At" phi_pretty;
+         ])
 
   let string_of ~width state = Pretty.sprint ~width (pretty state)
 end
 
-
 module Delta = struct
-  type lvar_origin = (VarInfo.t)
+  type lvar_origin = VarInfo.t
+
   type t = {
-    var_association: AbstractValue.T.t list Int.Map.t;
+    var_association : AbstractValue.T.t list Int.Map.t;
     lookup : (int * AbstractValue.Set.t) AbstractValue.Map.t;
     relation : Int.Set.t Int.Map.t;
   }
-  let empty = {
-    var_association = Int.Map.empty;
-    lookup = AbstractValue.Map.empty;
-    relation = Int.Map.empty;
-  }
-  let equate (_v1:lvar_origin) (_v2:lvar_origin) = ()
-  let outlives (_v1:lvar_origin) (_v2:lvar_origin) = ()
+
+  let empty =
+    {
+      var_association = Int.Map.empty;
+      lookup = AbstractValue.Map.empty;
+      relation = Int.Map.empty;
+    }
+
+  let equate (_v1 : lvar_origin) (_v2 : lvar_origin) = ()
+  let outlives (_v1 : lvar_origin) (_v2 : lvar_origin) = ()
 end

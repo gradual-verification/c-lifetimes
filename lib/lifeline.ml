@@ -3,15 +3,14 @@ open GoblintCil
 open Cil_wrappers
 
 module Config = struct
-  type dump_type = CIL | CFG | ALL
+  type dump_type = CIL | CFG | ALL [@@deriving equal]
 
   let dump_type_str = function CIL -> "cil" | CFG -> "cfg" | ALL -> "all"
 
-  let ( = ) (dt1 : dump_type) (dt2 : dump_type) =
-    String.equal (dump_type_str dt1) (dump_type_str dt2)
-
   let match_dump_type (dt : dump_type option) (desired : dump_type) =
-    match dt with Some t -> t = desired || t = ALL | None -> true
+    match dt with
+    | Some t -> equal_dump_type t desired || equal_dump_type t ALL
+    | None -> true
 
   type config_t = {
     dump_type : dump_type option;
@@ -26,4 +25,8 @@ end
 
 let analyze (_config : Config.config_t) (file : GoblintCil.file) =
   iterGlobals file (fun g ->
-      match g with GFun (fd, loc) -> (print_endline (Location.string_of ~width:1 loc)); Checking.analyze_function fd | _ -> ())
+      match g with
+      | GFun (fd, loc) ->
+          print_endline (Location.string_of ~width:1 loc);
+          Checking.analyze_function fd
+      | _ -> ())
