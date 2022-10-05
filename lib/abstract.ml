@@ -2,41 +2,90 @@ open Core
 open Cil_wrappers
 open GoblintCil
 
+(* liveness values. Alive indicates valid memory, 
+ * Dead is invalid memory, and Zombie is the join.*)
 type vitality = Alive | Zombie | Dead [@@deriving equal]
+
+(* CIL assigns a unique integer ID to each variable using the, 
+ * struct 'varinfo', which has the field 'vid' *)
 type vid = int [@@deriving sexp, compare]
 
+(* We extend 'varinfo' by unrolling a variable's type into a list,
+ * where each element of the list is the type at each level of
+ * indirection. For abstract values that correspond to variables,
+ * we use an 'indirection' field for type lookup. 
+ * struct 'varinfo', which has the field 'vid' *)
+type indirection = int [@@deriving sexp, compare]
+
+(* The definition of join for liveness values. *)
 let ( * ) (a : vitality) (b : vitality) =
   if equal_vitality a b then a else Zombie
 
 let string_of_vitality l =
   match l with Alive -> "Alive" | Dead -> "Dead" | Zombie -> "Zombie"
 
+(* We use a single struct, AbstractValue, to represent both abstract locations
+ * and lifetime variables. *)
 module AbstractValue = struct
   module T = struct
-    type t = int * int [@@deriving sexp, compare]
+    type t = vid * indirection [@@deriving sexp, compare]
   end
+
+  let prefix_abs_loc = "l_"
+  let prefix_ltvar = "`"
 
   include Comparable.Make (T)
 
+  (* Given a variable, we can choose to generate abstract values for each level of indirection
+   * in its type, or just the first level. For lifetime variables, which are assigned to each
+   *  type, we use gen_all. However, for abstract locations, we only use gen_all for parameters,
+   *  which are initialized on entry to a function, while we use gen_local for local variables,
+   *  which are uninitialized. *)
   let gen_local (vi : VarInfo.t) : T.t = (vi.vinfo.vid, 0)
 
   let gen_all (vi : VarInfo.t) : T.t list =
     List.mapi vi.unrolled_type ~f:(fun i _ -> (vi.vinfo.vid, i))
 
-  let copy_set s = List.fold_left (Set.to_list s) ~init:Set.empty ~f:Set.add
+  (* using a given variable map, initialize a mapping from abstract locations for parameters
+   *  and locals to a given type of value, which is specified in functions passed as parameters.   
+   *  by default, locals and parameters are handled the same, though this can be overridden *)
+  let initialize_absloc_map ~(vm : VarMap.t)
+      ~(map_to : T.t list -> (T.t * 'a) list)
+      ~(locals_map_to : T.t list -> (T.t * 'a) list) =
+    Map.of_alist_exn
+      (List.fold_left (VarMap.parameter_data vm) ~init:[]
+         ~f:(fun l (v : VarInfo.t) -> l @ map_to (gen_all v))
+      @ locals_map_to
+          (List.map (VarMap.local_data vm) ~f:(fun vi -> gen_local vi)))
 
-  let copy_map map copy =
-    List.fold_left (Map.keys map) ~init:Map.empty ~f:(fun m k ->
-        match Map.find m k with
-        | Some v -> Map.add_exn m ~key:k ~data:(copy v)
-        | None -> m)
-
+  (* produce a Pretty.doc object for a given abstract value *)
   let pretty (prefix : string) (varmap : VarMap.t) (abstract : T.t) =
     Pretty.text
       (prefix
       ^ VarMap.name_of_vid ~vm:varmap ~vid:(fst abstract)
       ^ string_of_int (snd abstract))
 
+  (* produce a Pretty.doc object for a map of type AbstractValue.Map *)
+  let pretty_map ~indent ~vm ~map ~prefix ~pretty_value =
+    Pretty.indent indent
+      (map |> Map.to_alist
+      |> List.map ~f:(fun kv ->
+             Pretty.concat
+               (pretty prefix vm (fst kv))
+               (Pretty.concat (Pretty.text " -> ") (pretty_value (snd kv))))
+      |> Pretty.docList ~sep:Pretty.line Fun.id ())
+
+  (* produce a Pretty.doc object for a map of type AbstractValue.Map which is 
+   * being used to map abstract locations *)
+  let pretty_absloc_map ?(indent = 4) vm ~map ~pretty_value =
+    pretty_map ~indent ~vm ~map ~prefix:prefix_abs_loc ~pretty_value
+
+  (* produce a Pretty.doc object for a map of type AbstractValue.Map which is 
+   * being used to map lifetime variables *)
+  let pretty_ltvar_map ?(indent = 4) vm ~map ~pretty_value =
+    pretty_map ~indent ~vm ~map ~prefix:prefix_ltvar ~pretty_value
+
+  (* produce a Pretty.doc object for a list of AbstractValues *)
   let pretty_list (prefix : string) (vm : VarMap.t) (ps : 'a list) =
     let rec concatenate prefix vm ls =
       match ls with
@@ -49,131 +98,126 @@ module AbstractValue = struct
     in
     Pretty.concat (Pretty.text "{")
       (Pretty.concat (concatenate prefix vm ps) (Pretty.text "}"))
+
+  (* produce a Pretty.doc object for a list of AbstractValues being used to
+   * represent abstract locations being *)
+  let pretty_absloc_list (vm : VarMap.t) (ps : 'a list) =
+    pretty_list prefix_abs_loc vm ps
 end
 
+(* The may-points-to map, which maps abstract locations to sets of abstract locations *)
 module Sigma = struct
-  type value = AbstractValue.Set.t
-  type t = value AbstractValue.Map.t
+  type t = AbstractValue.Set.t AbstractValue.Map.t
 
+  (* Joining two 'sigma' states merges their mappings. If a variable is mapped by each state,
+   * then we take the union of the two may-points-to sets.*)
   let join (a : t) (b : t) =
     AbstractValue.Map.merge_skewed a b ~combine:(fun ~key:_ av bv ->
         AbstractValue.Set.union av bv)
 
-  let copy c = AbstractValue.copy_map c AbstractValue.copy_set
-  let empty = AbstractValue.Map.empty
+  let get_points_to (sigma : t) (pointers : AbstractValue.T.t list) :
+      AbstractValue.T.t list =
+    let pointedTo =
+      List.map pointers ~f:(fun abv ->
+          let found_value = AbstractValue.Map.find sigma abv in
+          match found_value with
+          | Some set -> AbstractValue.Set.to_list set
+          | None -> [])
+    in
+    List.fold pointedTo ~init:[] ~f:List.append
 
-  let rec split_pairs (tlist : AbstractValue.T.t list) :
+  let set_points_to (sigma : t) (pointers : AbstractValue.T.t list)
+      (pointees : AbstractValue.T.t list) : t =
+    List.fold pointers ~init:sigma ~f:(fun s key ->
+        AbstractValue.Map.set s ~key ~data:(AbstractValue.Set.of_list pointees))
+
+  let locations_of_exp (_vm : VarMap.t) (e : exp) : AbstractValue.T.t list =
+    match e with
+    | AddrOf _lva -> []
+    | UnOp (_unop, _i, _tt) -> []
+    | Lval _lvl -> []
+    | Question (_c, _t, _f, _tt) -> []
+    | _ -> []
+
+  let locations_of_lval (_vm : VarMap.t) (lv : lval) : AbstractValue.T.t list =
+    match lv with
+    | lhost, _offset -> (
+        match lhost with
+        | Var vi -> [ AbstractValue.gen_local (VarInfo.initialize vi) ]
+        | Mem _ex -> [])
+
+  (* The helper function map_pair produces a set of mappings for a list of abstract values.
+   * For a variable x:int** with vid = 5, we have the types [int **, int *, int]. If x is a parameter,
+   * we use gen_all to produce [(5, 0), (5, 1), (5, 2)]. Then, we use map_pairs to produce the mappings
+   * [(5, 0) -> {(5, 1)}, (5, 1) -> {(5, 2)}], which are used to populate a may-points-to map.*)
+  let rec map_pairs (tlist : AbstractValue.T.t list) :
       (AbstractValue.T.t * AbstractValue.Set.t) list =
     match tlist with
     | h1 :: h2 :: tl ->
         [ (h1, AbstractValue.Set.add AbstractValue.Set.empty h2) ]
-        @ split_pairs ([ h2 ] @ tl)
+        @ map_pairs ([ h2 ] @ tl)
     | h :: [] -> [ (h, AbstractValue.Set.empty) ]
     | [] -> []
 
-  let initial vm : value AbstractValue.Map.t =
-    AbstractValue.Map.of_alist_exn
-      (List.fold_left (VarMap.parameter_data vm) ~init:[]
-         ~f:(fun l (v : VarInfo.t) -> l @ split_pairs (AbstractValue.gen_all v))
-      @ List.map (VarMap.local_data vm) ~f:(fun vi ->
-            (AbstractValue.gen_local vi, AbstractValue.Set.empty)))
+  (* Creates the initial may-points-to map, which contains full mappings for all parameters as generated
+   * by may_pairs, and single mappings to empty sets for the locations of local variables.*)
+  let initial ~vm : t =
+    let local_emptyset abs_local_list =
+      List.map abs_local_list ~f:(fun abs -> (abs, AbstractValue.Set.empty))
+    in
+    AbstractValue.initialize_absloc_map ~vm ~map_to:map_pairs
+      ~locals_map_to:local_emptyset
 
   let pretty ?(indent = 4) ~vm sigma =
-    Pretty.indent indent
-      (sigma |> AbstractValue.Map.to_alist
-      |> List.map ~f:(fun kv ->
-             Pretty.concat
-               (AbstractValue.pretty "l_" vm (fst kv))
-               (Pretty.concat (Pretty.text " -> ")
-                  (AbstractValue.pretty_list "l_" vm
-                     (AbstractValue.Set.to_list (snd kv)))))
-      |> Pretty.docList ~sep:Pretty.line Fun.id ())
-
-  let string_of ~vm ~width sigma = Pretty.sprint ~width (pretty ~vm sigma)
+    let pretty_value (s : AbstractValue.Set.t) =
+      AbstractValue.pretty_absloc_list vm (AbstractValue.Set.to_list s)
+    in
+    AbstractValue.pretty_absloc_map ~indent vm ~map:sigma ~pretty_value
 end
 
+(* The liveness map, which maps abstract locations to their vitality *)
 module Chi = struct
-  type value = vitality
-  type t = value AbstractValue.Map.t
+  type t = vitality AbstractValue.Map.t
 
+  (* Joining two mappings for an abstract location produces a new map, where
+   * its new vitality is the join of its two previous vitalities.*)
   let join (a : t) (b : t) =
     AbstractValue.Map.merge_skewed a b ~combine:(fun ~key:_ av bv -> av * bv)
 
-  let copy c = AbstractValue.copy_map c Fn.id
-  let empty = AbstractValue.Map.empty
-
-  let initial vm =
-    let to_alive abv = (abv, Alive) in
-    let locals =
-      let local_to_alive = Fn.compose to_alive AbstractValue.gen_local in
-      List.map (VarMap.local_data vm) ~f:local_to_alive
+  (* Each abstract location maps to Alive by default. *)
+  let initial ~(vm : VarMap.t) : t =
+    let all_to_alive abv_list =
+      List.map abv_list ~f:(fun abv -> (abv, Alive))
     in
-    let params =
-      let param_to_alive pi = List.map (AbstractValue.gen_all pi) ~f:to_alive in
-      let params_mappings =
-        List.map (VarMap.parameter_data vm) ~f:param_to_alive
-      in
-      List.concat params_mappings
-    in
-    AbstractValue.Map.of_alist_exn (locals @ params)
+    AbstractValue.initialize_absloc_map ~vm ~map_to:all_to_alive
+      ~locals_map_to:all_to_alive
 
   let pretty ?(indent = 4) ~vm chi =
-    Pretty.indent indent
-      (chi |> AbstractValue.Map.to_alist
-      |> List.map ~f:(fun kv ->
-             Pretty.concat
-               (AbstractValue.pretty "l_" vm (fst kv))
-               (Pretty.concat (Pretty.text " -> ")
-                  (Pretty.text (string_of_vitality (snd kv)))))
-      |> Pretty.docList ~sep:Pretty.line Fun.id ())
-
-  let string_of ~width ~vm chi = Pretty.sprint ~width (pretty ~vm chi)
-
-  let initialize (abs_locs : AbstractValue.T.t list) =
-    List.fold abs_locs ~init:AbstractValue.Map.empty ~f:(fun m key ->
-        AbstractValue.Map.add_exn m ~key ~data:Alive)
+    let pretty_value s = Pretty.text (string_of_vitality s) in
+    AbstractValue.pretty_absloc_map ~indent vm ~map:chi ~pretty_value
 end
 
+(* A mapping from abstract locations to sets of SourceLocations where they were last modified in Sigma *)
+(* this is similar enough to Sigma that we could merge the two, or create a functor. *)
 module Phi = struct
-  type value = Location.Set.t
-  type t = value AbstractValue.Map.t
+  type t = Location.Set.t AbstractValue.Map.t
 
+  (* Similar to Sigma, joining two Phi values merges the sets mapped to by abstract location *)
   let join (a : t) (b : t) =
     AbstractValue.Map.merge_skewed a b ~combine:(fun ~key:_ av bv ->
         Location.Set.union av bv)
 
-  let copy c =
-    AbstractValue.copy_map c (fun s ->
-        List.fold_left (Location.Set.to_list s) ~init:Location.Set.empty
-          ~f:(fun s v -> Location.Set.add s v))
-
-  let initial vm =
-    let to_empty abv = (abv, Location.Set.empty) in
-    let locals =
-      let local_to_empty = Fn.compose to_empty AbstractValue.gen_local in
-      List.map (VarMap.local_data vm) ~f:local_to_empty
+  (* Each abstract location maps to an empty set by default. *)
+  let initial ~vm : t =
+    let all_to_empty abv_list =
+      List.map abv_list ~f:(fun abv -> (abv, Location.Set.empty))
     in
-    let params =
-      let param_data = VarMap.parameter_data vm in
-      let param_to_mappings vi =
-        List.map (AbstractValue.gen_all vi) ~f:to_empty
-      in
-      List.concat (List.map param_data ~f:param_to_mappings)
-    in
-    AbstractValue.Map.of_alist_exn (locals @ params)
+    AbstractValue.initialize_absloc_map ~vm ~map_to:all_to_empty
+      ~locals_map_to:all_to_empty
 
   let pretty ?(indent = 4) ~vm phi =
-    Pretty.indent indent
-      (phi |> AbstractValue.Map.to_alist
-      |> List.map ~f:(fun kv ->
-             Pretty.concat
-               (AbstractValue.pretty "l_" vm (fst kv))
-               (Pretty.concat (Pretty.text " -> ")
-                  (Location.pretty_list (Location.Set.to_list (snd kv)))))
-      |> Pretty.docList ~sep:Pretty.line Fun.id ())
-
-  let string_of ~width ~vm phi = Pretty.sprint ~width (pretty ~vm phi)
-  let empty = AbstractValue.Map.empty
+    let pretty_value s = Location.pretty_list (Location.Set.to_list s) in
+    AbstractValue.pretty_absloc_map ~indent vm ~map:phi ~pretty_value
 end
 
 module AbstractState = struct
@@ -184,11 +228,19 @@ module AbstractState = struct
     variables : VarMap.t;
   }
 
+  let updateSigma (state : t) (newSigma : Sigma.t) =
+    {
+      liveness = state.liveness;
+      mayptsto = newSigma;
+      reassignment = state.reassignment;
+      variables = state.variables;
+    }
+
   let copy t =
     {
-      liveness = Chi.copy t.liveness;
-      mayptsto = Sigma.copy t.mayptsto;
-      reassignment = Phi.copy t.reassignment;
+      liveness = t.liveness;
+      mayptsto = t.mayptsto;
+      reassignment = t.reassignment;
       variables = t.variables;
     }
 
@@ -201,12 +253,12 @@ module AbstractState = struct
     }
 
   let initial fd =
-    let vars = VarMap.initialize fd in
+    let vm = VarMap.initialize fd in
     {
-      variables = vars;
-      liveness = Chi.initial vars;
-      mayptsto = Sigma.initial vars;
-      reassignment = Phi.initial vars;
+      variables = vm;
+      liveness = Chi.initial ~vm;
+      mayptsto = Sigma.initial ~vm;
+      reassignment = Phi.initial ~vm;
     }
 
   let title text doc = Pretty.concat (Pretty.text (text ^ ":\n")) doc

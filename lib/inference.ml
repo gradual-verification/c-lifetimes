@@ -2,7 +2,20 @@ open GoblintCil
 open Abstract
 module DF = Dataflow
 
-let flowInst _instr state = state
+let flowAssignment (lv : lval) (expr : exp) (_lloc : location)
+    (_rloc : location) (state : AbstractState.t) =
+  let pointers = Sigma.locations_of_lval state.variables lv in
+  let pointees =
+    Sigma.get_points_to state.mayptsto
+      (Sigma.locations_of_exp state.variables expr)
+  in
+  let updatedSigma = Sigma.set_points_to state.mayptsto pointers pointees in
+  AbstractState.updateSigma state updatedSigma
+
+let flowInst (instr : Cil.instr) (state : AbstractState.t) : AbstractState.t =
+  match instr with
+  | Set (lv, expr, lloc, rloc) -> flowAssignment lv expr lloc rloc state
+  | _ -> state
 
 module LifetimeInference = struct
   type t = AbstractState.t
