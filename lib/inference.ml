@@ -4,10 +4,10 @@ module DF = Dataflow
 
 let flowAssignment (lv : lval) (expr : exp) (_lloc : location)
     (_rloc : location) (state : AbstractState.t) =
-  let pointers = Sigma.locations_of_lval state.variables lv in
+  let pointers = Sigma.locations_of_lval state.mayptsto lv in
   let pointees =
     Sigma.get_points_to state.mayptsto
-      (Sigma.locations_of_exp state.variables expr)
+      (Sigma.locations_of_exp state.mayptsto expr)
   in
   let updatedSigma = Sigma.set_points_to state.mayptsto pointers pointees in
   AbstractState.updateSigma state updatedSigma

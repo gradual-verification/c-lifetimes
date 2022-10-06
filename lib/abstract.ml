@@ -115,36 +115,77 @@ module Sigma = struct
     AbstractValue.Map.merge_skewed a b ~combine:(fun ~key:_ av bv ->
         AbstractValue.Set.union av bv)
 
-  let get_points_to (sigma : t) (pointers : AbstractValue.T.t list) :
-      AbstractValue.T.t list =
+  (* if we have a mapping l_1 -> {l_2, l_3, l_4}, then l_1 is the pointer location,
+   * while l_2-4 are the pointee locations. *)
+
+  (* For a set of pointer locations, get the merged set of locations pointed to by each *)
+  let get_points_to (sigma : t) (pointers : AbstractValue.Set.t) :
+      AbstractValue.Set.t =
     let pointedTo =
-      List.map pointers ~f:(fun abv ->
+      List.map (AbstractValue.Set.to_list pointers) ~f:(fun abv ->
           let found_value = AbstractValue.Map.find sigma abv in
           match found_value with
-          | Some set -> AbstractValue.Set.to_list set
-          | None -> [])
+          | Some set -> set
+          | None -> AbstractValue.Set.empty)
     in
-    List.fold pointedTo ~init:[] ~f:List.append
+    List.fold pointedTo ~init:AbstractValue.Set.empty ~f:AbstractValue.Set.union
 
-  let set_points_to (sigma : t) (pointers : AbstractValue.T.t list)
-      (pointees : AbstractValue.T.t list) : t =
-    List.fold pointers ~init:sigma ~f:(fun s key ->
-        AbstractValue.Map.set s ~key ~data:(AbstractValue.Set.of_list pointees))
+  (* Set each provided pointer location to point to a given set of pointee locations *)
+  let set_points_to (sigma : t) (pointers : AbstractValue.Set.t)
+      (pointees : AbstractValue.Set.t) : t =
+    AbstractValue.Set.fold pointers ~init:sigma ~f:(fun s key ->
+        AbstractValue.Map.set s ~key ~data:pointees)
 
-  let locations_of_exp (_vm : VarMap.t) (e : exp) : AbstractValue.T.t list =
+  (* for a given pointer location corresponding to a local variable, get the set of pointee
+   * locations at a given level of indirection in sigma *)
+  let rec dereference (sigma : t) (initial : AbstractValue.T.t list)
+      (ind : indirection) : AbstractValue.Set.t =
+    if ind > 0 then
+      let dereferenced_once =
+        List.fold initial ~init:[] ~f:(fun acc v ->
+            let pointing_to = AbstractValue.Map.find sigma v in
+            match pointing_to with
+            | Some mptsto -> acc @ AbstractValue.Set.to_list mptsto
+            | None -> [])
+      in
+      dereference sigma dereferenced_once (ind - 1)
+    else AbstractValue.Set.of_list initial
+
+  (* get the set of pointer locations for a given expression, where a
+   * pointee location is pointed to by a pointer location *)
+  let rec locations_of_exp ?(ind = 0) (sigma : t) (e : exp) :
+      AbstractValue.Set.t =
     match e with
-    | AddrOf _lva -> []
-    | UnOp (_unop, _i, _tt) -> []
-    | Lval _lvl -> []
-    | Question (_c, _t, _f, _tt) -> []
-    | _ -> []
+    | AddrOf lva ->
+        let adjusted = if ind > 0 then ind - 1 else ind in
+        locations_of_lval ~ind:adjusted sigma lva
+        (* unary operations consist of logical and bitwise not,
+           * as well as decrement. So, we treat these as an equivalence
+           * class over the locations for the base expression *)
+    | UnOp (_, iex, _) -> locations_of_exp ~ind sigma iex
+    | Lval lvl -> locations_of_lval ~ind sigma lvl
+    (* when we encounter a conditional, we merge the sets of locations, 
+     * from each branch. *)
+    | Question (_, tex, fex, _) ->
+        AbstractValue.Set.union
+          (locations_of_exp ~ind sigma tex)
+          (locations_of_exp ~ind sigma fex)
+    | _ -> AbstractValue.Set.empty
 
-  let locations_of_lval (_vm : VarMap.t) (lv : lval) : AbstractValue.T.t list =
+  (* if an lval corresponds to an expression of the form *x, then it will contain 'Mem', so we
+   * increment indirection by one. Else, it's just x, so we find the expressions corresponding to
+   * x at the provided level of indirection from prior recursive calls *)
+  and locations_of_lval ?(ind = 0) (sigma : t) (lv : lval) : AbstractValue.Set.t
+      =
     match lv with
     | lhost, _offset -> (
         match lhost with
-        | Var vi -> [ AbstractValue.gen_local (VarInfo.initialize vi) ]
-        | Mem _ex -> [])
+        | Var vi ->
+            let starting_point =
+              [ AbstractValue.gen_local (VarInfo.initialize vi) ]
+            in
+            dereference sigma starting_point ind
+        | Mem ex -> locations_of_exp ~ind:(ind + 1) sigma ex)
 
   (* The helper function map_pair produces a set of mappings for a list of abstract values.
    * For a variable x:int** with vid = 5, we have the types [int **, int *, int]. If x is a parameter,
