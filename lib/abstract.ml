@@ -6,7 +6,7 @@ open GoblintCil
  * Dead is invalid memory, and Zombie is the join.*)
 type vitality = Alive | Zombie | Dead [@@deriving equal]
 
-(* CIL assigns a unique integer ID to each variable using the, 
+(* CIL assigns a unique integer ID to each variable in the, 
  * struct 'varinfo', which has the field 'vid' *)
 type vid = int [@@deriving sexp, compare]
 
@@ -16,6 +16,10 @@ type vid = int [@@deriving sexp, compare]
  * we use an 'indirection' field for type lookup. 
  * struct 'varinfo', which has the field 'vid' *)
 type indirection = int [@@deriving sexp, compare]
+
+(* CIL assigns a unique integer ID to each statement using the, 
+ * struct 'stmt', which has the field 'sid' *)
+type sid = int [@@deriving sexp, compare]
 
 (* The definition of join for liveness values. *)
 let ( * ) (a : vitality) (b : vitality) =
@@ -27,6 +31,14 @@ let string_of_vitality l =
 (* We use a single struct, AbstractValue, to represent both abstract locations
  * and lifetime variables. *)
 module AbstractValue = struct
+
+  (* an abstract location or lifetime variable can correspond to a local variable 
+   * at a given level of indirection, or memory allocated by a given statement.*)
+  type abstract_value = Variable of vid * indirection | Alloc of sid
+  [@@deriving sexp, compare]
+  
+  (* TODO: refactor t to use the abstract_value type above *)
+
   module T = struct
     type t = vid * indirection [@@deriving sexp, compare]
   end

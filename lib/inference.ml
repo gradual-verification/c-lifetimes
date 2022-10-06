@@ -12,6 +12,7 @@ let flowAssignment (lv : lval) (expr : exp) (_lloc : location)
   let updatedSigma = Sigma.set_points_to state.mayptsto pointers pointees in
   AbstractState.updateSigma state updatedSigma
 
+
 let flowInst (instr : Cil.instr) (state : AbstractState.t) : AbstractState.t =
   match instr with
   | Set (lv, expr, lloc, rloc) -> flowAssignment lv expr lloc rloc state
