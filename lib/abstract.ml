@@ -42,15 +42,12 @@ module AbstractValue = struct
   module T = struct
     type t = vid * indirection [@@deriving sexp, compare]
   end
+
   include T
-  module C = Comparable.Make (T)
-  include C
-  module Infix = (C : Comparable.Infix with type t := t)
-  include Infix
+  include Comparable.Make (T)
 
   let prefix_abs_loc = "l_"
   let prefix_ltvar = "`"
-
 
   (* Given a variable, we can choose to generate abstract values for each level of indirection
    * in its type, or just the first level. For lifetime variables, which are assigned to each
@@ -84,8 +81,7 @@ module AbstractValue = struct
   (* produce a Pretty.doc object for a map of type AbstractValue.Map *)
   let pretty_map ~indent ~vm ~map ~prefix ~pretty_value =
     let pretty_key k = pretty prefix vm k in
-      PrettyExtensions.pretty_map ~indent ~map ~pretty_key ~pretty_value
-
+    PrettyExtensions.pretty_map ~indent ~map ~pretty_key ~pretty_value
 
   (* produce a Pretty.doc object for a map of type AbstractValue.Map which is 
    * being used to map abstract locations *)
@@ -100,8 +96,8 @@ module AbstractValue = struct
   (* produce a Pretty.doc object for a list of AbstractValues *)
 
   let pretty_list (prefix : string) (vm : VarMap.t) (ps : 'a list) =
-    let pretty_closure = fun v -> pretty prefix vm v in
-      PrettyExtensions.pretty_list ps pretty_closure
+    let pretty_closure v = pretty prefix vm v in
+    PrettyExtensions.pretty_list ps pretty_closure
 
   (* produce a Pretty.doc object for a list of AbstractValues being used to
    * represent abstract locations being *)
@@ -111,51 +107,99 @@ end
 
 module type Prettyable = sig
   type t
+
   val pretty : t -> VarMap.t -> Pretty.doc
 end
 
-module SetLattice (V:Comparable.S) = struct
-  type t = V.Set.t AbstractValue.Map.t
+module type LatticeState = sig
+  type v
+  type t
+
+  val join : t -> t -> t
+  val initial : VarMap.t -> t
+  val pretty : ?indent:int -> t -> VarMap.t -> Pretty.doc
+end
+
+module type LatticeDefn = sig
+  type v
+
+  val join : v -> v -> v
+end
+
+module Lattice (V : LatticeDefn) = struct
+  type t = V.v AbstractValue.Map.t
+
   let join (a : t) (b : t) =
     AbstractValue.Map.merge_skewed a b ~combine:(fun ~key:_ av bv ->
-        Set.union av bv)
+        V.join av bv)
 
-  let initial ~(vm:VarMap.t)~(locals:(AbstractValue.t list -> (AbstractValue.t * 'a) list))~(param:(AbstractValue.t list -> (AbstractValue.t * 'a) list)) : t =
-    AbstractValue.initialize_absloc_map ~vm ~map_to:param
-      ~locals_map_to:locals
+  let initial ~(vm : VarMap.t)
+      ~(locals : AbstractValue.t list -> (AbstractValue.t * 'a) list)
+      ~(param : AbstractValue.t list -> (AbstractValue.t * 'a) list) : t =
+    AbstractValue.initialize_absloc_map ~vm ~map_to:param ~locals_map_to:locals
 
-  let pretty ?(indent = 4) ~vm (map : t)(pretty_value: V.Set.t -> VarMap.t -> Pretty.doc) =
+  let pretty ?(indent = 4) ~vm (map : t)
+      (pretty_value : V.v -> VarMap.t -> Pretty.doc) =
     AbstractValue.pretty_absloc_map ~indent vm ~map ~pretty_value:(fun v ->
-      pretty_value v vm)
+        pretty_value v vm)
 end
 
+module Phi : sig
+  include LatticeState
+end = struct
+  module V = struct
+    type v = SourceLocation.Set.t
 
-module Phi = struct
-  module Lattice = SetLattice(Location)
-  include Lattice
-  
-  let pretty ?(indent = 4) s vm = 
-    let pretty_value (locs:Location.Set.t) (_vm:VarMap.t) = PrettyExtensions.pretty_list (Location.Set.to_list locs) Location.pretty in
-      Lattice.pretty ~indent ~vm s pretty_value
+    let join = SourceLocation.Set.union
+  end
 
-  let initial_local abv_list =
-    List.map abv_list ~f:(fun abv -> (abv, Location.Set.empty))
+  include V
+  module L = Lattice (V)
+  include L
 
-  let initial_param abv_list = initial_local abv_list
+  let pretty ?(indent = 4) s vm =
+    let pretty_value (locs : SourceLocation.Set.t) (_vm : VarMap.t) =
+      PrettyExtensions.pretty_list
+        (SourceLocation.Set.to_list locs)
+        SourceLocation.pretty
+    in
+    L.pretty ~indent ~vm s pretty_value
 
-  let initial vm = 
-    let to_empty abv_list = List.map abv_list ~f:(fun abv -> (abv, Location.Set.empty)) in
-      Lattice.initial ~vm ~locals:to_empty ~param:to_empty
+  let initial vm =
+    let to_empty abv_list =
+      List.map abv_list ~f:(fun abv -> (abv, SourceLocation.Set.empty))
+    in
+    L.initial ~vm ~locals:to_empty ~param:to_empty
 end
 
-module Sigma = struct
+module Sigma : sig
+  include LatticeState
+
+  val get_points_to : t -> v -> v
+  val set_points_to : t -> v -> v -> t
+  val dereference : t -> v -> indirection -> v
+  val locations_of_exp : ?indir:int -> t -> exp -> v
+  val locations_of_lval : ?indir:int -> t -> lval -> v
+end = struct
   (* The may-points-to map, which maps abstract locations to sets of abstract locations *)
-  module Lattice = SetLattice(AbstractValue)
-  include Lattice
-  let pretty ?(indent = 4) s vm = 
-    let pretty_abv abv = AbstractValue.pretty AbstractValue.prefix_abs_loc vm abv in
-    let pretty_abv_set (locs:AbstractValue.Set.t) (_vm:VarMap.t) = PrettyExtensions.pretty_list (AbstractValue.Set.to_list locs) pretty_abv in
-    Lattice.pretty ~indent ~vm s pretty_abv_set
+  module V = struct
+    type v = AbstractValue.Set.t
+
+    let join = AbstractValue.Set.union
+  end
+
+  include V
+  module L = Lattice (V)
+  include L
+
+  let pretty ?(indent = 4) s vm =
+    let pretty_abv abv =
+      AbstractValue.pretty AbstractValue.prefix_abs_loc vm abv
+    in
+    let pretty_abv_set (locs : AbstractValue.Set.t) (_vm : VarMap.t) =
+      PrettyExtensions.pretty_list (AbstractValue.Set.to_list locs) pretty_abv
+    in
+    L.pretty ~indent ~vm s pretty_abv_set
 
   (* The helper function map_pair produces a set of mappings for a list of abstract values.
      * For a variable x:int** with vid = 5, we have the types [int **, int *, int]. If x is a parameter,
@@ -170,15 +214,17 @@ module Sigma = struct
     | h :: [] -> [ (h, AbstractValue.Set.empty) ]
     | [] -> []
 
-  let initial vm = 
-    let initial_local abv_list = List.map abv_list ~f:(fun abv -> (abv, AbstractValue.Set.empty)) in
-     Lattice.initial ~vm ~locals:initial_local ~param:map_pairs
+  let initial vm =
+    let initial_local abv_list =
+      List.map abv_list ~f:(fun abv -> (abv, AbstractValue.Set.empty))
+    in
+    L.initial ~vm ~locals:initial_local ~param:map_pairs
 
   (* if we have a mapping l_1 -> {l_2, l_3, l_4}, then l_1 is the pointer location,
    * while l_2-4 are the pointee locations. *)
 
   (* For a set of pointer locations, get the merged set of locations pointed to by each *)
-  let get_points_to (sigma : Lattice.t) (pointers : AbstractValue.Set.t)  =
+  let get_points_to (sigma : t) (pointers : AbstractValue.Set.t) =
     let pointedTo =
       List.map (AbstractValue.Set.to_list pointers) ~f:(fun abv ->
           let found_value = AbstractValue.Map.find sigma abv in
@@ -189,83 +235,86 @@ module Sigma = struct
     List.fold pointedTo ~init:AbstractValue.Set.empty ~f:AbstractValue.Set.union
 
   (* Set each provided pointer location to point to a given set of pointee locations *)
-  let set_points_to (sigma : Lattice.t) (pointers : AbstractValue.Set.t)
-      (pointees : AbstractValue.Set.t) : Lattice.t =
+  let set_points_to (sigma : t) (pointers : AbstractValue.Set.t)
+      (pointees : AbstractValue.Set.t) : t =
     AbstractValue.Set.fold pointers ~init:sigma ~f:(fun s key ->
         AbstractValue.Map.set s ~key ~data:pointees)
 
   (* for a given pointer location corresponding to a local variable, get the set of pointee
    * locations at a given level of indirection in sigma *)
-  let rec dereference (sigma : Lattice.t) (initial : AbstractValue.t list)
-      (ind : indirection) : AbstractValue.Set.t =
-    if ind > 0 then
+  let rec dereference (sigma : t) (initial : AbstractValue.Set.t)
+      (indir : indirection) : AbstractValue.Set.t =
+    if indir > 0 then
       let dereferenced_once =
-        List.fold initial ~init:[] ~f:(fun acc v ->
+        Set.fold initial ~init:AbstractValue.Set.empty ~f:(fun acc v ->
             let pointing_to = Map.find sigma v in
             match pointing_to with
-            | Some mptsto -> acc @ Set.to_list mptsto
-            | None -> [])
+            | Some mptsto -> AbstractValue.Set.union acc mptsto
+            | None -> AbstractValue.Set.empty)
       in
-      dereference sigma dereferenced_once (ind - 1)
-    else AbstractValue.Set.of_list initial
+      dereference sigma dereferenced_once (indir - 1)
+    else initial
 
   (* get the set of pointer locations for a given expression, where a
    * pointee location is pointed to by a pointer location *)
-  let rec locations_of_exp ?(ind = 0) (sigma : Lattice.t) (e : exp) :
+  let rec locations_of_exp ?(indir = 0) (sigma : t) (e : exp) :
       AbstractValue.Set.t =
     match e with
     | AddrOf lva ->
-        let adjusted = if ind > 0 then ind - 1 else ind in
-        locations_of_lval ~ind:adjusted sigma lva
+        let adjusted = if indir > 0 then indir - 1 else indir in
+        locations_of_lval ~indir:adjusted sigma lva
         (* unary operations consist of logical and bitwise not,
            * as well as decrement. So, we treat these as an equivalence
            * class over the locations for the base expression *)
-    | UnOp (_, iex, _) -> locations_of_exp ~ind sigma iex
-    | Lval lvl -> locations_of_lval ~ind sigma lvl
+    | UnOp (_, iex, _) -> locations_of_exp ~indir sigma iex
+    | Lval lvl -> locations_of_lval ~indir sigma lvl
     (* when we encounter a conditional, we merge the sets of locations, 
      * from each branch. *)
     | Question (_, tex, fex, _) ->
         AbstractValue.Set.union
-          (locations_of_exp ~ind sigma tex)
-          (locations_of_exp ~ind sigma fex)
+          (locations_of_exp ~indir sigma tex)
+          (locations_of_exp ~indir sigma fex)
     | _ -> AbstractValue.Set.empty
 
   (* if an lval corresponds to an expression of the form *x, then it will contain 'Mem', so we
    * increment indirection by one. Else, it's just x, so we find the expressions corresponding to
    * x at the provided level of indirection from prior recursive calls *)
-  and locations_of_lval ?(ind = 0) (sigma : Lattice.t) (lv : lval) :
+  and locations_of_lval ?(indir = 0) (sigma : t) (lv : lval) :
       AbstractValue.Set.t =
     match lv with
     | lhost, _offset -> (
         match lhost with
         | Var vi ->
             let starting_point =
-              [ AbstractValue.gen_local (VarInfo.initialize vi) ]
+              AbstractValue.Set.of_list
+                [ AbstractValue.gen_local (VarInfo.initialize vi) ]
             in
-            dereference sigma starting_point ind
-        | Mem ex -> locations_of_exp ~ind:(ind + 1) sigma ex)
+            dereference sigma starting_point indir
+        | Mem ex -> locations_of_exp ~indir:(indir + 1) sigma ex)
 end
 
 (* The liveness map, which maps abstract locations to their vitality *)
-module Chi = struct
-  type t = vitality AbstractValue.Map.t
-  
-  let join (a : t) (b : t) =
-    AbstractValue.Map.merge_skewed a b ~combine:(fun ~key:_ av bv ->
-        join_vitality av bv)
+module Chi : LatticeState = struct
+  module V = struct
+    type v = vitality
 
-  
-  let pretty ?(indent = 4) map vm = 
-    let pretty_key k = (AbstractValue.pretty AbstractValue.prefix_abs_loc vm k) in
-    let pretty_value v =  Pretty.text (string_of_vitality v) in
-    PrettyExtensions.pretty_map ~indent ~map ~pretty_key ~pretty_value
-    
-   let initial vm =    
-     let to_alive abv_list = List.map abv_list ~f:(fun abv -> (abv, Alive)) in
-     AbstractValue.initialize_absloc_map ~vm ~locals_map_to:to_alive ~map_to:to_alive
+    let join = join_vitality
+  end
 
+  include V
+  module L = Lattice (V)
+  include L
+
+  let pretty ?(indent = 4) s vm =
+    let pretty_value (v : vitality) (_vm : VarMap.t) =
+      Pretty.text (string_of_vitality v)
+    in
+    L.pretty ~indent ~vm s pretty_value
+
+  let initial vm =
+    let to_alive abv_list = List.map abv_list ~f:(fun abv -> (abv, Alive)) in
+    L.initial ~vm ~locals:to_alive ~param:to_alive
 end
-
 
 module AbstractState = struct
   type t = {
@@ -312,9 +361,9 @@ module AbstractState = struct
 
   let pretty state =
     let varmap_pretty = VarMap.pretty state.variables in
-    let sigma_pretty = Sigma.pretty state.mayptsto state.variables  in
-    let chi_pretty = Chi.pretty  state.liveness state.variables in
-    let phi_pretty = Phi.pretty state.reassignment state.variables  in
+    let sigma_pretty = Sigma.pretty state.mayptsto state.variables in
+    let chi_pretty = Chi.pretty state.liveness state.variables in
+    let phi_pretty = Phi.pretty state.reassignment state.variables in
     Pretty.indent 4
       (Pretty.docList ~sep:(Pretty.text "\n") Fun.id ()
          [

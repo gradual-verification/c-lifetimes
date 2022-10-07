@@ -65,9 +65,7 @@ module VarMap = struct
     }
 end
 
-
-
-module Location = struct
+module SourceLocation = struct
   module T = struct
     type t = Cil.location = {
       line : int;
@@ -82,10 +80,7 @@ module Location = struct
     [@@deriving sexp, compare]
   end
   include T
-  module C = Comparable.Make (T)
-  include C
-  module Infix = (C : Comparable.Infix with type t := t)
-  include Infix
+  include Comparable.Make (T)
 
   let pretty (loc : t) : Pretty.doc =
     Pretty.text

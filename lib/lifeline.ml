@@ -27,6 +27,6 @@ let analyze (_config : Config.config_t) (file : GoblintCil.file) =
   iterGlobals file (fun g ->
       match g with
       | GFun (fd, loc) ->
-          print_endline (Location.string_of ~width:1 loc);
+          print_endline (SourceLocation.string_of ~width:1 loc);
           Inference.analyze_function fd
       | _ -> ())
