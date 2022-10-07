@@ -1,6 +1,7 @@
 open Core
 open GoblintCil
 open Cil
+open Helpers
 
 module Type = struct
   type t = typ
@@ -64,6 +65,8 @@ module VarMap = struct
     }
 end
 
+
+
 module Location = struct
   module T = struct
     type t = Cil.location = {
@@ -78,25 +81,17 @@ module Location = struct
     }
     [@@deriving sexp, compare]
   end
+  include T
+  module C = Comparable.Make (T)
+  include C
+  module Infix = (C : Comparable.Infix with type t := t)
+  include Infix
 
-  let pretty (t : T.t) : Pretty.doc =
+  let pretty (loc : t) : Pretty.doc =
     Pretty.text
-      (t.file ^ ":" ^ string_of_int t.line ^ ":" ^ string_of_int t.column)
+      (loc.file ^ ":" ^ string_of_int loc.line ^ ":" ^ string_of_int loc.column)
 
-  let pretty_list (ps : 'a list) =
-    let rec concatenate ls =
-      match ls with
-      | h :: [] -> pretty h
-      | h :: tl ->
-          Pretty.concat
-            (Pretty.concat (pretty h) (Pretty.text ","))
-            (concatenate tl)
-      | [] -> Pretty.nil
-    in
-    Pretty.concat (Pretty.text "{")
-      (Pretty.concat (concatenate ps) (Pretty.text "}"))
+  let pretty_list (ps : 'a list) = PrettyExtensions.pretty_list ps pretty
 
   let string_of ~width loc = Pretty.sprint ~width (pretty loc)
-
-  include Comparable.Make (T)
 end

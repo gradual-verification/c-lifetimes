@@ -28,5 +28,5 @@ let analyze (_config : Config.config_t) (file : GoblintCil.file) =
       match g with
       | GFun (fd, loc) ->
           print_endline (Location.string_of ~width:1 loc);
-          Checking.analyze_function fd
+          Inference.analyze_function fd
       | _ -> ())
