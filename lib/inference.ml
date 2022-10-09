@@ -2,16 +2,22 @@ open GoblintCil
 open Abstract
 module DF = Dataflow
 
-let flowAssignment (lv : lval) (expr : exp) (_lloc : location)
-    (_rloc : location) (state : AbstractState.t) =
-  let pointers = Sigma.locations_of_lval state.mayptsto lv in
+let flowAssignment (lv : lval) (expr : exp) (lloc : location)
+    (_rloc : location) (state : AbstractState.t) : AbstractState.t =
+  let pointers = MayPtsTo.locations_of_lval state.mayptsto lv in
   let pointees =
-    Sigma.get_points_to state.mayptsto
-      (Sigma.locations_of_exp state.mayptsto expr)
+    MayPtsTo.get_points_to state.mayptsto
+      (MayPtsTo.locations_of_exp state.mayptsto expr)
   in
-  let updatedSigma = Sigma.set_points_to state.mayptsto pointers pointees in
-  AbstractState.updateSigma state updatedSigma
-
+  let updatedMayPtsTo = MayPtsTo.set_points_to state.mayptsto pointers pointees in
+  let updatedLiveness = Liveness.kill state.liveness pointees in
+  let updatedAssignment = AssignedAt.update state.reassignment pointees lloc in
+  {
+    liveness = updatedLiveness;
+    mayptsto = updatedMayPtsTo;
+    variables = state.variables;
+    reassignment = updatedAssignment;
+  }
 
 let flowInst (instr : Cil.instr) (state : AbstractState.t) : AbstractState.t =
   match instr with
