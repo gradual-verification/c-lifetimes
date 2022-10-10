@@ -1,6 +1,6 @@
 include Abstract
+include Inference
 open GoblintCil
-open Cil_wrappers
 
 module Config = struct
   type dump_type = CIL | CFG | ALL [@@deriving equal]
@@ -23,10 +23,11 @@ module Config = struct
     { dump_type = dt; dump_loc = dl; output = op; verbose = v }
 end
 
+
+
 let analyze (_config : Config.config_t) (file : GoblintCil.file) =
   iterGlobals file (fun g ->
       match g with
       | GFun (fd, loc) ->
-          print_endline (SourceLocation.string_of ~width:1 loc);
-          Inference.analyze_function fd
+          lifetimeInference fd loc
       | _ -> ())
