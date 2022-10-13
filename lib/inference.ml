@@ -1,6 +1,10 @@
 open Core
 open GoblintCil
-open Abstract
+open Abstract_loc
+open Abstract_state
+open Assigned
+open Liveness
+open Points_to
 include Cil_wrappers
 module DF = Dataflow
 module IH = Inthash
@@ -25,8 +29,8 @@ let flowAssignment (lv : lval) (expr : exp) (lloc : location) (_rloc : location)
 
 let flowFree (params : exp list) (state : AbstractState.t) : AbstractState.t =
   let pointers =
-    List.fold params ~init:AbstractValue.Set.empty ~f:(fun s e ->
-        AbstractValue.Set.union s (MayPtsTo.locations_of_exp state.mayptsto e))
+    List.fold params ~init:AbstractLoc.Set.empty ~f:(fun s e ->
+        AbstractLoc.Set.union s (MayPtsTo.locations_of_exp state.mayptsto e))
   in
   let pointees = MayPtsTo.get_points_to state.mayptsto pointers in
   let updatedLiveness = Liveness.kill state.liveness pointees in

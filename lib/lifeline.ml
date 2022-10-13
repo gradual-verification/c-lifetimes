@@ -1,5 +1,5 @@
-include Abstract
 include Inference
+include Vitality
 open GoblintCil
 
 module Config = struct

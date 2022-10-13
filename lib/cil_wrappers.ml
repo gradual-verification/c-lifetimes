@@ -3,6 +3,7 @@ open GoblintCil
 open Cil
 open Helpers
 
+
 module Type = struct
   type t = typ
 
@@ -16,7 +17,7 @@ module Type = struct
 end
 
 module VarInfo = struct
-  type t = { vinfo : varinfo; unrolled_type : typ list }
+  type t = { vinfo : varinfo; unrolled_type : typ list } 
 
   let initialize vi = { vinfo = vi; unrolled_type = Type.unroll vi.vtype }
 
@@ -63,6 +64,12 @@ module VarMap = struct
       locals = initialize_varmap fd.slocals;
       parameters = initialize_varmap fd.sformals;
     }
+end
+
+module type Prettyable = sig
+  type t
+
+  val pretty : t -> VarMap.t -> Pretty.doc
 end
 
 module SourceLocation = struct
